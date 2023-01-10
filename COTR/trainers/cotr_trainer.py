@@ -24,9 +24,26 @@ class COTRTrainer(base_trainer.BaseTrainer):
     def validate_batch(self, data_pack):
         assert self.model.training is False
         with torch.no_grad():
-            img = data_pack['image'].cuda()
-            query = data_pack['queries'].cuda()
-            target = data_pack['targets'].cuda()
+            img = []
+            corrs =[]
+
+            for idx in range(len(data_pack['rgb'])):
+                img_input = data_pack['rgb'][idx].cuda()
+        #         img_reverse = data_pack['rgb_reverse'].cuda()
+                corrs_input = data_pack['corrs'][idx].cuda()
+
+                # batch stack 
+                img.append(img_input)
+                corrs.append(corrs_input)
+
+            img = torch.stack(img)
+            corrs = torch.stack(corrs)
+#             print ('img shape' , img.shape)
+
+#             img = img.permute(0,3,1,2)
+            query = corrs[:, :, :2]
+            target = corrs[:, :, 2:]
+            
             self.optim.zero_grad()
             pred = self.model(img, query)['pred_corrs']
             loss = torch.nn.functional.mse_loss(pred, target)
@@ -49,7 +66,7 @@ class COTRTrainer(base_trainer.BaseTrainer):
             loss_data = loss.data.item()
             if np.isnan(loss_data):
                 print('loss is nan while validating')
-            return loss_data, pred
+            return loss_data, pred , query , target , img
 
     def validate(self):
         '''validate for whole validation dataset
@@ -61,13 +78,13 @@ class COTRTrainer(base_trainer.BaseTrainer):
                 enumerate(self.val_loader), total=len(self.val_loader),
                 desc='Valid iteration=%d' % self.iteration, ncols=80,
                 leave=False):
-            loss_data, pred = self.validate_batch(data_pack)
+            loss_data, pred ,query ,target ,img = self.validate_batch(data_pack)
             val_loss_list.append(loss_data)
         mean_loss = np.array(val_loss_list).mean()
         validation_data = {'val_loss': mean_loss,
                            'pred': pred,
                            }
-        self.push_validation_data(data_pack, validation_data)
+        self.push_validation_data(data_pack, validation_data ,query , target ,img)
         self.save_model()
         if training:
             self.model.train()
@@ -94,19 +111,27 @@ class COTRTrainer(base_trainer.BaseTrainer):
             img = np.interp(img, [img.min(), img.max()], [0, 255]).astype(np.uint8)
             img = Image.fromarray(img)
             draw = ImageDraw.Draw(img)
-            corr *= np.array([constants.MAX_SIZE * 2, constants.MAX_SIZE, constants.MAX_SIZE * 2, constants.MAX_SIZE])
+#             corr *= np.array([constants.MAX_SIZE * 2, constants.MAX_SIZE, constants.MAX_SIZE * 2, constants.MAX_SIZE])
+            corr *= np.array([1280,384,1280,384])
             for c in corr:
                 draw.line(c, fill=col)
             out.append(np.array(img))
         out = np.array(out) / 255.0
         return utils.np_img_to_torch_img(out)
 
-    def push_validation_data(self, data_pack, validation_data):
+    def push_validation_data(self, data_pack, validation_data ,query , target ,img):
         val_loss = validation_data['val_loss']
-        pred_corrs = np.concatenate([data_pack['queries'].numpy(), validation_data['pred'].cpu().numpy()], axis=-1)
-        pred_corrs = self.draw_corrs(data_pack['image'], pred_corrs)
-        gt_corrs = np.concatenate([data_pack['queries'].numpy(), data_pack['targets'].cpu().numpy()], axis=-1)
-        gt_corrs = self.draw_corrs(data_pack['image'], gt_corrs, (0, 255, 0))
+        query_cpu = query.cpu().detach().numpy()
+        target_cpu = target.cpu().detach().numpy()
+        img_cpu = img.cpu()
+        
+#         print ('query_cpu shape' , query_cpu.shape)
+#         print ('target_cpu shape' , target_cpu.shape)
+        
+        pred_corrs = np.concatenate((query_cpu, validation_data['pred'].cpu().numpy()), axis=-1)
+        pred_corrs = self.draw_corrs(img_cpu, pred_corrs)
+        gt_corrs = np.concatenate((query_cpu, target_cpu), axis=-1)
+        gt_corrs = self.draw_corrs(img_cpu, gt_corrs, (0, 255, 0))
 
         gt_img = vutils.make_grid(gt_corrs, normalize=True, scale_each=True)
         pred_img = vutils.make_grid(pred_corrs, normalize=True, scale_each=True)
@@ -121,9 +146,28 @@ class COTRTrainer(base_trainer.BaseTrainer):
     def train_batch(self, data_pack):
         '''train for one batch of data
         '''
-        img = data_pack['image'].cuda()
-        query = data_pack['queries'].cuda()
-        target = data_pack['targets'].cuda()
+#         img = data_pack['image'].cuda()
+#         query = data_pack['queries'].cuda()
+#         target = data_pack['targets'].cuda()
+        img = []
+        corrs =[]
+        
+        for idx in range(len(data_pack['rgb'])):
+            img_input = data_pack['rgb'][idx].cuda()
+    #         img_reverse = data_pack['rgb_reverse'].cuda()
+            corrs_input = data_pack['corrs'][idx].cuda()
+
+            # batch stack 
+            img.append(img_input)
+            corrs.append(corrs_input)
+
+        img = torch.stack(img)
+        corrs = torch.stack(corrs)
+#         print ('img shape' , img.shape)
+        
+#         img = img.permute(0,2,3,1)
+        query = corrs[:, :, :2]
+        target = corrs[:, :, 2:]
 
         self.optim.zero_grad()
         pred = self.model(img, query)['pred_corrs']

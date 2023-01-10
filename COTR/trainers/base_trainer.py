@@ -82,15 +82,19 @@ class BaseTrainer(abc.ABC):
             # if self.iteration != 0 and (iteration - 1) != self.iteration:
             #     continue  # for resuming
             # self.iteration = iteration
-            # self.iteration += 1
+            self.iteration += 1
+            
+            
             if self.iteration % self.valid_iter == 0:
                 time.sleep(2)  # Prevent possible deadlock during epoch transition
                 self.validate()
             self.train_batch(data_pack)
+            
+#             self.iteration += 1
 
             if self.iteration >= self.max_iter:
                 break
-            self.iteration += 1
+            
 
     def train(self):
         '''entrance of the whole training process

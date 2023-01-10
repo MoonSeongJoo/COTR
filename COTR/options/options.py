@@ -27,7 +27,7 @@ def set_dataset_arguments(parser):
     data_arg.add_argument('--use_ram', type=str2bool, default=False, help='load image/depth/pcd to ram')
     data_arg.add_argument('--info_level', choices=['rgb', 'rgbd'], type=str, default='rgbd', help='the information level of dataset')
     data_arg.add_argument('--scene_file', type=str, default=None, required=False, help='what scene/seq want to use')
-    data_arg.add_argument('--workers', type=int, default=0, help='worker for loading data')
+    data_arg.add_argument('--workers', type=int, default=10, help='worker for loading data')
     data_arg.add_argument('--crop_cam', choices=['no_crop', 'crop_center', 'crop_center_and_resize'], type=str, default='crop_center_and_resize', help='crop the center of image to avoid changing aspect ratio, resize to make the operations batch-able.')
 
 

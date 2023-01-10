@@ -77,9 +77,13 @@ class BackboneBase(nn.Module):
         return y['0']
 
     def forward(self, tensor_list: NestedTensor):
-        assert tensor_list.tensors.shape[-2:] == (constants.MAX_SIZE, constants.MAX_SIZE * 2)
-        left = self.body(tensor_list.tensors[..., 0:constants.MAX_SIZE])
-        right = self.body(tensor_list.tensors[..., constants.MAX_SIZE:2 * constants.MAX_SIZE])
+#         print ('tensor_list_shape' , tensor_list.tensors.shape )
+#         assert tensor_list.tensors.shape[-2:] == (constants.MAX_SIZE, constants.MAX_SIZE * 2)
+        assert tensor_list.tensors.shape[-2:] == (192,1280)
+#         left = self.body(tensor_list.tensors[..., 0:constants.MAX_SIZE])
+#         right = self.body(tensor_list.tensors[..., constants.MAX_SIZE:2 * constants.MAX_SIZE])
+        left = self.body(tensor_list.tensors[..., 0:640])
+        right = self.body(tensor_list.tensors[..., 640:1280])
         xs = {}
         for k in left.keys():
             xs[k] = torch.cat([left[k], right[k]], dim=-1)
