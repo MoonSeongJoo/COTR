@@ -41,7 +41,7 @@ class NerfPositionalEncoding(nn.Module):
     @torch.no_grad()
     def forward(self, inputs):
         out = torch.cat([torch.sin(i * math.pi * inputs) for i in self.bases] + [torch.cos(i * math.pi * inputs) for i in self.bases], axis=-1)
-        assert torch.isnan(out).any() == False
+        # assert torch.isnan(out).any() == False
         return out
 
 

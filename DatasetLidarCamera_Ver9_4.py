@@ -27,9 +27,9 @@ from pykitti import odometry
 import pykitti
 import matplotlib.pyplot as plt
 from torchvision.transforms import functional as tvtf
-np.seterr(all='ignore')
+import matplotlib as mpl
+import matplotlib.cm as cm
 
-#
 # def get_calib_kitti_odom(sequence):
 #     if sequence == 0:
 #         return torch.tensor([[718.856, 0, 607.1928], [0, 718.856, 185.2157], [0, 0, 1]])
@@ -70,7 +70,19 @@ class DatasetLidarCameraKittiOdometry(Dataset):
         self.K = {}
         self.suf = suf
         self.img_shape =(384,1280)
-        self.num_kp = 2000
+        self.num_kp = 500
+        # print ("number of kp = " , self.num_kp)
+        
+        # model_type = "DPT_Large"     # MiDaS v3 - Large     (highest accuracy, slowest inference speed)
+        # # model_type = "DPT_Hybrid"   # MiDaS v3 - Hybrid    (medium accuracy, medium inference speed)
+        # # model_type = "MiDaS_small"  # MiDaS v2.1 - Small   (lowest accuracy, highest inference speed)
+        
+        # midas_transforms = torch.hub.load("intel-isl/MiDaS", "transforms")
+
+        # if model_type == "DPT_Large" or model_type == "DPT_Hybrid":
+        #     self.transform = midas_transforms.dpt_transform
+        # else:
+        #     self.transform = midas_transforms.small_transform
         
         self.all_files = []
         self.sequence_list = ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10',
@@ -96,6 +108,7 @@ class DatasetLidarCameraKittiOdometry(Dataset):
         # for seq in ['00', '03', '05', '06', '07', '08', '09']:
         for seq in self.sequence_list:
             odom = odometry(self.calib_path_total,self.poses_path_total, seq)
+            # odom = odometry(self.calib_path_total, seq)
             calib = odom.calib
             T_cam02_velo_np = calib.T_cam2_velo #gt pose from cam02 to velo_lidar (T_cam02_velo: 4x4)
             self.K[seq] = calib.K_cam2 # 3x3
@@ -133,7 +146,7 @@ class DatasetLidarCameraKittiOdometry(Dataset):
             if not os.path.exists(val_RT_sequences_path):
                 os.makedirs(val_RT_sequences_path)
             if os.path.exists(val_RT_file):
-#                 print(f'VAL SET: Using this file: {val_RT_file}')
+                print(f'VAL SET: Using this file: {val_RT_file}')
                 df_test_RT = pd.read_csv(val_RT_file, sep=',')
                 for index, row in df_test_RT.iterrows():
                     self.val_RT.append(list(row))
@@ -179,6 +192,7 @@ class DatasetLidarCameraKittiOdometry(Dataset):
         rgb = to_tensor(rgb)
         rgb = normalization(rgb)
         return rgb
+
     def get_2D_lidar_projection(self,pcl, cam_intrinsic):
         pcl_xyz = cam_intrinsic @ pcl.T
         pcl_xyz = pcl_xyz.T
@@ -194,7 +208,8 @@ class DatasetLidarCameraKittiOdometry(Dataset):
         cam_intrinsic = cam_calib
         pcl_uv, pcl_z = self.get_2D_lidar_projection(pc_rotated.T, cam_intrinsic)
         mask = (pcl_uv[:, 0] > 0) & (pcl_uv[:, 0] < img_shape[1]) & (pcl_uv[:, 1] > 0) & (
-                pcl_uv[:, 1] < img_shape[0]) & (pcl_z > 0)
+                pcl_uv[:, 1] < img_shape[0] ) & (pcl_z > 0)
+        mask1 = (pcl_uv[:, 1] < 188)
         pcl_uv_no_mask = pcl_uv
         pcl_z_no_mask = pcl_z
         pcl_uv = pcl_uv[mask]
@@ -211,17 +226,47 @@ class DatasetLidarCameraKittiOdometry(Dataset):
         #depth_img = depth_img.cuda()
         depth_img = depth_img.permute(2, 0, 1)
         points_index = np.arange(pcl_uv_no_mask.shape[0])[mask]
-
-        return depth_img , pcl_uv , pcl_uv_no_mask , pcl_z , mask , points_index
+        points_index1 = np.arange(pcl_uv_no_mask.shape[0])[mask1]
+        
+        return depth_img, pcl_uv , pcl_uv_no_mask , pcl_z , mask , points_index , points_index1
         
     def trim_corrs(self, in_corrs):
         length = in_corrs.shape[0]
+#         print ("number of keypoint before trim : {}".format(length))
         if length >= self.num_kp:
             mask = np.random.choice(length, self.num_kp)
             return in_corrs[mask]
         else:
             mask = np.random.choice(length, self.num_kp - length)
             return np.concatenate([in_corrs, in_corrs[mask]], axis=0)
+
+    def knn(self, x, y ,k):
+# #         print (" x shape = " , x.shape)
+#         inner = -2*torch.matmul(x.transpose(-2, 1), x)
+#         xx = torch.sum(x**2, dim=1, keepdim=True)
+# #         print (" xx shape = " , x.shape)
+#         pairwise_distance = -xx - inner - xx.transpose(4, 1)
+        pairwise_distance = F.pairwise_distance(x,y)
+
+        idx = pairwise_distance.topk(k=k, dim=-1)[1]   # (batch_size, num_points, k)
+        return idx
+
+    def two_images_side_by_side(self, img_a, img_b):
+        assert img_a.shape == img_b.shape, f'{img_a.shape} vs {img_b.shape}'
+        assert img_a.dtype == img_b.dtype
+        h, w, c = img_a.shape
+#         b,h, w, c = img_a.shape
+        canvas = np.zeros((h, 2 * w, c), dtype=img_a.dtype)
+#         canvas = np.zeros((b, h, 2 * w, c), dtype=img_a.dtype)
+        canvas[:, 0 * w:1 * w, :] = img_a
+        canvas[:, 1 * w:2 * w, :] = img_b
+#         canvas = np.zeros((b, h, 2 * w, c), dtype=img_a.cpu().numpy().dtype)
+#         canvas[:, :, 0 * w:1 * w, :] = img_a.cpu().numpy()
+#         canvas[:, :, 1 * w:2 * w, :] = img_b.cpu().numpy()
+
+        #canvas[:, :, : , 0 * w:1 * w] = img_a.cpu().numpy()
+        #canvas[:, :, : , 1 * w:2 * w] = img_b.cpu().numpy()
+        return canvas
     
     # From Github https://github.com/balcilar/DenseDepthMap
     def dense_map(self, Pts ,n, m, grid):
@@ -255,24 +300,18 @@ class DatasetLidarCameraKittiOdometry(Dataset):
         S[S == 0] = 1
         out = np.zeros((m,n))
         out[grid + 1 : -grid, grid + 1 : -grid] = Y/S
-        return out
+        return out 
     
-    def two_images_side_by_side(self, img_a, img_b):
-        assert img_a.shape == img_b.shape, f'{img_a.shape} vs {img_b.shape}'
-        assert img_a.dtype == img_b.dtype
-        h, w, c = img_a.shape
-#         b,h, w, c = img_a.shape
-        canvas = np.zeros((h, 2 * w, c), dtype=img_a.dtype)
-#         canvas = np.zeros((b, h, 2 * w, c), dtype=img_a.dtype)
-        canvas[:, 0 * w:1 * w, :] = img_a
-        canvas[:, 1 * w:2 * w, :] = img_b
-#         canvas = np.zeros((b, h, 2 * w, c), dtype=img_a.cpu().numpy().dtype)
-#         canvas[:, :, 0 * w:1 * w, :] = img_a.cpu().numpy()
-#         canvas[:, :, 1 * w:2 * w, :] = img_b.cpu().numpy()
-
-        #canvas[:, :, : , 0 * w:1 * w] = img_a.cpu().numpy()
-        #canvas[:, :, : , 1 * w:2 * w] = img_b.cpu().numpy()
-        return canvas    
+    def colormap(self, disp):
+        """"Color mapping for disp -- [H, W] -> [3, H, W]"""
+#         disp_np = disp.cpu().numpy()        # tensor -> numpy
+        disp_np = disp
+        vmax = np.percentile(disp_np, 95)
+        normalizer = mpl.colors.Normalize(vmin=disp_np.min(), vmax=vmax)
+        mapper = cm.ScalarMappable(norm=normalizer, cmap='magma')  #magma, plasma, etc.
+        colormapped_im = (mapper.to_rgba(disp_np)[:, :, :3])
+        return colormapped_im.transpose(2, 0, 1)
+#         return colormapped_im
     
     def __len__(self):
         return len(self.all_files)
@@ -317,24 +356,19 @@ class DatasetLidarCameraKittiOdometry(Dataset):
         #     h_mirror = True
         #     pc_in[1, :] *= -1
 
-        img = Image.open(img_path)
-#         img = cv2.imread(img_path)
-
-#         print ('img raw shape' ,  np.asarray(img).shape)
-#         plt.figure(figsize=(10, 10))
-#         plt.imshow(img)
-#         plt.title("img raw", fontsize=22)
-#         plt.axis('off')
-#         plt.show()
+#         img = Image.open(img_path).convert('RGB')
+        img = cv2.imread(img_path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+#         print ('img raw shape' , np.asarray(img).shape)
         
         img_rotation = 0.
         # if self.split == 'train':
         #     img_rotation = np.random.uniform(-5, 5)
-        try:
-            img = self.custom_transform(img, img_rotation, h_mirror)
-        except OSError:
-            new_idx = np.random.randint(0, self.__len__())
-            return self.__getitem__(new_idx)
+#         try:
+#             img = self.custom_transform(img, img_rotation, h_mirror)
+#         except OSError:
+#             new_idx = np.random.randint(0, self.__len__())
+#             return self.__getitem__(new_idx)
         
         
         # Rotate PointCloud for img_rotation
@@ -342,7 +376,6 @@ class DatasetLidarCameraKittiOdometry(Dataset):
             #R = mathutils.Euler((radians(img_rotation), 0, 0), 'XYZ')
             R = mathutils.Euler((radians(img_rotation), 0, 0))
             #R1 = R.to_matrix()
-            #print ("---------euler--------" , R1)
             #Rx = mathutils.Matrix.Rotation(radians(img_rotation), 3, 'X')
             #Ry = mathutils.Matrix.Rotation(0, 3, 'Y')
             #Rz = mathutils.Matrix.Rotation(0, 3, 'Z')
@@ -378,216 +411,73 @@ class DatasetLidarCameraKittiOdometry(Dataset):
         R, T = invert_pose(R, T)
         R_torch, T_torch = torch.tensor(R), torch.tensor(T)
 
-        #io.imshow(depth_img.numpy(), cmap='jet')
-        #io.show()
         calib = self.K[seq]
         if h_mirror:
             calib[2] = (img.shape[2] / 2)*2 - calib[2]
+            
         
-        real_shape = [376 , 1241 ,3]
-#         print('-------- pc_gt shape ----------- ' ,pc_in.shape)
-        depth_gt, gt_uv ,gt_uv_nomask ,gt_z ,gt_mask , gt_points_index = self.lidar_project_depth(pc_in, calib , real_shape) # image_shape
-        depth_gt /= 80.
-#         print('-------- gt_points_index ----------- ' , gt_points_index)
-#         print('gt mask shape' , gt_mask.shape)
-#         print('gt uv shape' , gt_uv.shape)
-#         print(f' gt_uv shape = {gt_uv.shape}', end='gt_uv end \n')        
+# #         print('img_raw_shape' , img.shape)
+# #         img = img.permute(1,2,0)
+# #         img_np = img.cpu().numpy()
+# #         img_np_resized = cv2.resize(img_np, (640,192), interpolation=cv2.INTER_LINEAR)
+
+# #         fig = plt.figure(figsize=(10,20))
+# #         plt.axis('off')
+# #         fig=plt.imshow(img_np_resized)
+# #         plt.show()
+         
+        real_shape = [img.shape[0], img.shape[1] , img.shape[2]]
+
+        depth_gt, gt_uv ,gt_uv_nomask ,gt_z ,gt_mask , gt_points_index , gt_points_index1 = self.lidar_project_depth(pc_in, calib , real_shape) # image_shape
+        depth_gt /= 80.     
         
         R = mathutils.Quaternion(R).to_matrix()
         R.resize_4x4()
         T = mathutils.Matrix.Translation(T)
-        #RT = T * R
         RT = T @ R # version change matutils * --> @ 
+        pc_rotated = rotate_back(pc_in, RT) # Pc` = RT * Pc   
 
-        pc_rotated = rotate_back(pc_in, RT) # Pc` = RT * Pc        
-        
-#         print('-------- pc_rotate shape ----------- ' ,pc_rotated.shape)
-        depth_img, uv , uv_nomask , z , mask , points_index = self.lidar_project_depth(pc_rotated, calib , real_shape) # image_shape
+        depth_img, uv , uv_nomask , z , mask , points_index , points_index1 = self.lidar_project_depth(pc_rotated, calib , real_shape) # image_shape
         depth_img /= 80.
         
-#         print('-------depth_img_shape-------' , depth_img.shape)
-#         print('-------- points_index ----------- ' , points_index)
         lidarOnImage = np.hstack([uv, z])
-        dense_depth_img = self.dense_map(lidarOnImage.T , 1241, 376, 2)
+        dense_depth_img = self.dense_map(lidarOnImage.T , real_shape[1], real_shape[0] , 2)
+        dense_depth_img = dense_depth_img.astype(np.uint8)
+        dense_depth_img = cv2.resize(dense_depth_img, (640,192), interpolation=cv2.INTER_LINEAR)
+        dense_depth_img = self.colormap(dense_depth_img)
         dense_depth_img = torch.tensor(dense_depth_img)
         
-#         fig = plt.figure(figsize=(10,20))
-#         plt.axis('off')
-#         fig=plt.imshow(dense_depth_img)
-#         plt.show()
-        
-#         print('-------- uv shape ----------- ' ,uv.shape)
-#         print(f' uv shape = {uv.shape}', end='\n') 
-#         print('-------- uv type ----------- ' ,type(uv))
-        ############## end of lidar depth image processing ################
-        
-        ########## start of Img rgb processing ###########################
-        
-        # PAD ONLY ON RIGHT AND BOTTOM SIDE
-        #rgb = img.cuda()
-        rgb = img
-        shape_pad = [0, 0, 0, 0]
+        img = cv2.resize(img, (640,192), interpolation=cv2.INTER_LINEAR)
+        rgb_img = transforms.ToTensor()(img)
 
-        shape_pad[3] = (self.img_shape[0] - rgb.shape[1])  # // 2
-        shape_pad[1] = (self.img_shape[1] - rgb.shape[2])  # // 2 + 1
-
-        rgb = F.pad(rgb, shape_pad)
-
-#         print ('img padding shape' ,  rgb.shape)
-#         plt.figure(figsize=(10, 10))
-#         plt.imshow(rgb.permute(1,2,0))
-#         plt.title("img raw", fontsize=22)
-#         plt.axis('off')
-#         plt.show()        
-        
-#         depth_img = F.pad(depth_img, shape_pad)
-#         depth_gt = F.pad(depth_gt, shape_pad)
-        dense_depth_img = F.pad(dense_depth_img, shape_pad)
-#         print ('dataloader dense_depth_img shape' , dense_depth_img.shape)
-#         print ('dataloader depth_img shape' , depth_img.shape)
-        
-        rgb = rgb.permute(1,2,0)
-#         depth_img_np = depth_img.permute(1,2,0)
-#         depth_gt_np = depth_gt.permute(1,2,0)
-        dense_depth_img_np = dense_depth_img.unsqueeze(dim=0).permute(1,2,0)
-#         print ('dataloader rgb shape' , rgb.shape)
-#         print ('dataloader dense_depth_img shape' , dense_depth_img_np.shape)        
-        
-        rgb_np = rgb.cpu().numpy()
-#         depth_img_np = depth_img_np.cpu().numpy()
-#         depth_gt_np = depth_gt_np.cpu().numpy()
-        dense_depth_img_np = dense_depth_img_np.cpu().numpy().astype(np.uint8)
-#         print('dense_depth_img_np shape' , dense_depth_img_np.shape)
-        
-        rgb_np_resized = cv2.resize(rgb_np, (640,192), interpolation=cv2.INTER_LINEAR)
-#         print ('rgb resized shape' ,  rgb_np_resized.shape)
-#         plt.figure(figsize=(10, 10))
-#         plt.imshow(rgb_np_resized)
-#         plt.title("rgb_np_resized", fontsize=22)
-#         plt.axis('off')
-#         plt.show()            
-        
-#         depth_img_np_resized = cv2.resize(depth_img_np, (640,192), interpolation=cv2.INTER_LINEAR)
-#         depth_gt_np_resized = cv2.resize(depth_gt_np, (640,192), interpolation=cv2.INTER_LINEAR)
-        dense_depth_img_np_resized = cv2.resize(dense_depth_img_np, (640,192), interpolation=cv2.INTER_LINEAR)
-#         print ('dense_depth_img_np_resized' , dense_depth_img_np_resized.shape)
-#         rgb_np_resized = rgb_np
-#         depth_img_np_resized = depth_img_np
-#         depth_gt_np_resized = depth_gt_np  
-        ##### network input raw data ###################################
-        rgb_np_resized_color = rgb_np_resized
-#         depth_img_np_resized_color = cv2.cvtColor(depth_img_np_resized, cv2.COLOR_GRAY2RGB)
-#         depth_gt_np_resized_color = cv2.cvtColor(depth_gt_np_resized, cv2.COLOR_GRAY2RGB)
-        dense_depth_img_np_resized_color = cv2.cvtColor(dense_depth_img_np_resized, cv2.COLOR_GRAY2RGB)
-        
-#         print ('rgb dtype',rgb_np_resized_color.dtype)
-#         print ('dense_depth_img dtype',dense_depth_img_np_resized_color.dtype)
-        dense_depth_img_np_resized_color = dense_depth_img_np_resized_color.astype(np.float32)
-        sbs_img = self.two_images_side_by_side(rgb_np_resized_color, dense_depth_img_np_resized_color)
-        
-#         print ('sbs_img shape' ,  sbs_img.shape)
-#         plt.figure(figsize=(10, 10))
-#         plt.imshow(sbs_img)
-#         plt.title("rgb_np_resized", fontsize=22)
-#         plt.axis('off')
-#         plt.show()
-        
-        img  = tvtf.normalize(tvtf.to_tensor(sbs_img), (0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-#         print ('normalized sbs_img shape' ,  img.shape)
-#         plt.figure(figsize=(10, 10))
-#         plt.imshow(img.permute(1,2,0))
-#         plt.title("normalized sbs image", fontsize=22)
-#         plt.axis('off')
-#         plt.show()
-        
-#         img_reverse = torch.cat([img[..., 640:], img[..., :640]], axis=-1)           
-
-        img = transforms.ToTensor()(img.cpu().numpy())
-
-#         print ('normalized sbs_img shape' ,  img.shape)
-#         plt.figure(figsize=(10, 10))
-#         plt.imshow(img.permute(2,0,1))
-#         plt.title("normalized sbs image", fontsize=22)
-#         plt.axis('off')
-#         plt.show()
-        
-#         img_input = img.cuda()
-#         img_reverse_input  = img_reverse.cuda()        
-        
-#         print ('dense map shape' ,  dense_depth_img_np_resized_color.shape)
-#         plt.figure(figsize=(10, 10))
-#         plt.imshow(dense_depth_img_np_resized_color , cmap='magma')
-#         plt.title("dense_depth_img_np_resized_color", fontsize=22)
-#         plt.axis('off')
-
-        
-#         print ('rgb shape' ,  rgb_np_resized_color.shape)
-#         plt.figure(figsize=(10, 10))
-#         plt.imshow(rgb_np_resized_color.astype('uint8'))
-#         plt.title("rgb_np_resized_color", fontsize=22)
-#         plt.axis('off')
-#         plt.show
-
-        
-#         input_rgb_pytorch = transforms.ToTensor()(rgb_np_resized_color)
-#         input_lidar_pytorch = transforms.ToTensor()(depth_img_np_resized_color)
-#         input_lidar_gt_pytorch = transforms.ToTensor()(depth_gt_np_resized_color)
-#         input_lidar_raw_pytorch = transforms.ToTensor()(depth_img_np_resized)
-#         input_lidar_gt_raw_pytorch = transforms.ToTensor()(depth_gt_np_resized)
-#         input_dense_depth_img_pytorch = transforms.ToTensor()(dense_depth_img_np_resized_color)
-        
-#         rgb_torch = input_rgb_pytorch.permute(1,2,0)
-#         lidar_torch = input_lidar_pytorch.permute(1,2,0)
-#         dense_depth_img_torch = input_dense_depth_img_pytorch.permute(1,2,0)
-        
-#         lidar_gt_torch = input_lidar_pytorch.permute(1,2,0)
-#         lidar_raw_torch = input_lidar_raw_pytorch.permute(1,2,0)
-#         lidar_raw_gt_torch = input_lidar_gt_raw_pytorch.permute(1,2,0)
-        
-#         lidar_raw_torch = input_lidar_raw_pytorch.squeeze()
-#         lidar_raw_gt_torch = input_lidar_gt_raw_pytorch.squeeze()
-        
-        ##### generation intersection set of uv and gt_uv #########    
-        inter_gt_uv_mask = np.in1d(gt_points_index , points_index)
-        inter_uv_mask    = np.in1d(points_index , gt_points_index)
-#         print ('before gt_uv shape = ' , gt_uv.shape )
-#         print ('before uv shape = ' , uv.shape )
-#         print ('inter_gt_uv_mask shape' , inter_gt_uv_mask.shape)
-#         print ('inter_uv_mask shape' , inter_uv_mask.shape)
-#         print ('intersection_mask' , intersection_idx)
-        
         ########## corr dataset generation #############################
-#         min_size = min(gt_uv.shape[0],uv.shape[0])
-#         print ('gt_uv shape = ' , gt_uv.shape )
-#         print ('uv shape = ' , uv.shape )
-#         print ('min_size=' , min_size)
-#         gt_uv = gt_uv[:min_size , :]
-#         uv    = uv[:min_size , :] 
+
+        inter_gt_uv_mask = np.in1d(gt_points_index , points_index)
+#         inter_gt_uv_mask1 = np.in1d(inter_gt_uv_mask , points_index1)
+        inter_uv_mask    = np.in1d(points_index , gt_points_index)
+#         inter_uv_mask1    = np.in1d(inter_uv_mask , gt_points_index1)
 
         gt_uv = gt_uv[inter_gt_uv_mask]
-        uv    = uv[inter_uv_mask]            
-#         print ('after gt_uv shape = ' , gt_uv.shape )
-#         print ('after uv shape = ' , uv.shape )               
-        
-        corrs = np.concatenate([gt_uv, uv], axis=1)
-#         print ("corrs shape=" , corrs.shape)
+        uv    = uv[inter_uv_mask]   
 
-#         print ('queris x value max' , np.max(corrs[:, 0]))
-#         print ('queris x value min' , np.min(corrs[:, 0]))
-#         print ('queris y value max' , np.max(corrs[:, 1]))
-#         print ('queris y value min' , np.min(corrs[:, 1]))
-        
-#         print ('target x value max' , np.max(corrs[:, 2]))
-#         print ('target x value min' , np.min(corrs[:, 2]))
-#         print ('target y value max' , np.max(corrs[:, 3]))
-#         print ('target y value min' , np.min(corrs[:, 3]))
-        
-        corrs = self.trim_corrs(corrs)
+        corrs = np.concatenate([gt_uv, uv], axis=1)
         corrs = torch.tensor(corrs)
+        
         corrs[:, 0] = (0.5*corrs[:, 0])/1280
-        corrs[:, 1] = (1*corrs[:, 1])/384
+        corrs[:, 1] = (0.5*corrs[:, 1])/384
         corrs[:, 2] = (0.5*corrs[:, 2])/1280 + 0.5        
-        corrs[:, 3] = (1*corrs[:, 3])/384 
+        corrs[:, 3] = (0.5*corrs[:, 3])/384
+        
+#         valid_mask = (corrs[:, 1] < 0.5) & (corrs[:, 3] < 0.5) 
+#         corrs = corrs[valid_mask]
+        if corrs.shape[0] <= self.num_kp :
+            corrs = torch.zeros(self.num_kp, 4)
+            corrs[:, 2] = corrs[:, 2] + 0.5
+        
+#         corrs = self.trim_corrs(corrs) # random 2d point-cloud trim
+        corrs_knn_idx = self.knn(corrs[:,:2], corrs[:,2:], self.num_kp) # knn 2d point-cloud trim
+        corrs = corrs[corrs_knn_idx]
+#         print ("knn corrs shape = " , corrs.shape)
 
         assert (0.0 <= corrs[:, 0]).all() and (corrs[:, 0] <= 0.5).all()
         assert (0.0 <= corrs[:, 1]).all() and (corrs[:, 1] <= 1.0).all()
@@ -599,20 +489,16 @@ class DatasetLidarCameraKittiOdometry(Dataset):
 #         print ("-------corrs_max---------" , np.max(corrs[:,3]))
         
         if self.split == 'test':
-            sample = {'rgb': img, 'point_cloud': pc_in, 'calib': calib,
+            sample = {'rgb': rgb_img, 'point_cloud': pc_in, 'calib': calib,
                       'tr_error': T_torch, 'rot_error': R_torch, 'seq': int(seq), 'img_path': img_path,
                       'rgb_name': rgb_name + '.png', 'item': item, 'extrin': RT_torch,
-                      'initial_RT': initial_RT , 'corrs' : corrs }
+                      'initial_RT': initial_RT , 'dense_depth_img' : dense_depth_img , 'corrs' : corrs }
         else:
-            sample = {'rgb': img, 'point_cloud': pc_in, 'calib': calib,
+            sample = {'rgb': rgb_img, 'point_cloud': pc_in, 'calib': calib,
                       'tr_error': T_torch, 'rot_error': R_torch, 'seq': int(seq),
                       'rgb_name': rgb_name, 'item': item, 'extrin': RT_torch , 
-                      'corrs' : corrs }
-
-#         if self.split == 'test':
-#             sample = {'rgb': img, 'corrs' : corrs }
-#         else:
-#             sample = {'rgb': img, 'corrs' : corrs }
+                      'dense_depth_img' : dense_depth_img , 'corrs' : corrs
+                      }
 
         return sample
 

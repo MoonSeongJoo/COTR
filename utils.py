@@ -118,19 +118,22 @@ def merge_inputs(queries):
     imgs = []
     reflectances = []
     corrs =[]
+    depth_img =[]
 #     returns = {key: default_collate([d[key] for d in queries]) for key in queries[0]
 #                if key != 'point_cloud' and key != 'rgb' and key != 'reflectance' }
 
     returns = {key: default_collate([d[key] for d in queries]) for key in queries[0]
-           if key != 'point_cloud' and key != 'rgb' and key != 'reflectance' and key != 'corrs' }
+           if key != 'point_cloud' and key != 'rgb' and key != 'reflectance' and key != 'dense_depth_img' and key != 'corrs' }
     for input in queries:
         point_clouds.append(input['point_cloud'])
         imgs.append(input['rgb'])
+        depth_img.append(input['dense_depth_img'])
         corrs.append(input['corrs'])
         if 'reflectance' in input:
             reflectances.append(input['reflectance'])
     returns['point_cloud'] = point_clouds
     returns['rgb'] = imgs
+    returns['dense_depth_img'] = depth_img
     returns['corrs'] = corrs
     if len(reflectances) > 0:
         returns['reflectance'] = reflectances
