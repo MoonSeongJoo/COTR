@@ -1,4 +1,4 @@
 *.pyc
-./out/tb/
+/root/work/COTR/out/tb
 *.out
 
