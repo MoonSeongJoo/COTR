@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.cm as cm 
 from PIL import Image, ImageDraw
+from COTR.utils.utils import torch_img_to_np_img , np_img_to_torch_img
 
 def colormap(disp):
     """"Color mapping for disp -- [H, W] -> [3, H, W]"""
@@ -34,8 +35,8 @@ def two_images_side_by_side(img_a, img_b):
 #         canvas[:, :, : , 1 * w:2 * w] = img_b.cpu().numpy()
     return canvas_torch
 
-def draw_corrs(self, imgs, corrs, col=(255, 0, 0)):
-    imgs = utils.torch_img_to_np_img(imgs)
+def draw_corrs(imgs, corrs, col=(255, 0, 0)):
+    imgs = torch_img_to_np_img(imgs)
     out = []
     for img, corr in zip(imgs, corrs):
         img = np.interp(img, [img.min(), img.max()], [0, 255]).astype(np.uint8)
@@ -48,4 +49,4 @@ def draw_corrs(self, imgs, corrs, col=(255, 0, 0)):
             draw.point(c, fill=col)
         out.append(np.array(img))
     out = np.array(out) / 255.0
-    return utils.np_img_to_torch_img(out)
+    return np_img_to_torch_img(out)
