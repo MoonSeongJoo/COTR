@@ -51,7 +51,8 @@ def train(opt):
     pprint.pprint(dict(os.environ), width=1)
     result = subprocess.Popen(["nvidia-smi"], stdout=subprocess.PIPE)
     print(result.stdout.read().decode())
-    device = torch.cuda.current_device()
+    # device = torch.cuda.current_device()
+    device = torch.device('cuda:1')
     print(f'can see {torch.cuda.device_count()} gpus')
     print(f'current using gpu at {device} -- {torch.cuda.get_device_name(device)}')
     # dummy = torch.rand(3758725612).to(device)
@@ -70,13 +71,13 @@ def train(opt):
 #         train_dset = cotr_dataset.COTRDataset(opt, 'train')
 #         val_dset = cotr_dataset.COTRDataset(opt, 'val')
 
-    dataset_train = dataset_class("/mnt/data/kitti_odometry", max_r= 20.0, max_t=1.5,
+    dataset_train = dataset_class("/mnt/sgvrnas/sjmoon/kitti/kitti_odometry", max_r= 20.0, max_t=1.5,
                                   split='train', use_reflectance=False,
-                                  val_sequence= '00')
+                                  val_sequence= '06')
     
-    dataset_val = dataset_class("/mnt/data/kitti_odometry", max_r= 20.0, max_t= 1.5,
+    dataset_val = dataset_class("/mnt/sgvrnas/sjmoon/kitti/kitti_odometry", max_r= 20.0, max_t= 1.5,
                                 split='val', use_reflectance=False,
-                                val_sequence='00')
+                                val_sequence='06')
     
     train_dataset_size = len(dataset_train)
     val_dataset_size = len(dataset_val)
@@ -332,13 +333,13 @@ if __name__ == "__main__":
     opt.dim_feedforward = layer_2_channels[opt.layer]
     opt.num_queries = opt.num_kp
 #     opt.name = get_compact_naming_cotr(opt)
-    opt.out_dir = '/root/work/COTR/out'
+    opt.out_dir = '/home/seongjoo/work/autocalib/COTR'
     opt.name = '/20230124'
-    opt.tb_dir = '/root/work/COTR/out/tb'
+    opt.tb_dir = '/home/seongjoo/work/autocalib/COTR/tb'
 #     opt.out = os.path.join(opt.out_dir, opt.name)
 #     opt.tb_out = os.path.join(opt.tb_dir, opt.name)
-    opt.out = '/root/work/COTR/out/model/20230124'
-    opt.tb_out = '/root/work/COTR/out/tb/20230124'
+    opt.out = '/home/seongjoo/work/autocalib/COTR/out/model/20230124'
+    opt.tb_out = '/home/seongjoo/work/autocalib/COTR/out/tb/20230124'
     if opt.cc_resume:
         if os.path.isfile(os.path.join(opt.out, 'checkpoint.pth.tar')):
             print('resuming from last run')

@@ -7,8 +7,8 @@ class MonoDepth():
     
     def __init__(self):
         self.model_name         = "mono_resnet50_640x192"
-        self.encoder_path       = os.path.join("/root/work/COTR/monodepth2/models", self.model_name, "encoder.pth")
-        self.depth_decoder_path = os.path.join("/root/work/COTR/monodepth2/models", self.model_name, "depth.pth")
+        self.encoder_path       = os.path.join("/home/seongjoo/work/autocalib/COTR/monodepth2/models", self.model_name, "encoder.pth")
+        self.depth_decoder_path = os.path.join("/home/seongjoo/work/autocalib/COTR/monodepth2/models", self.model_name, "depth.pth")
         
         # device = torch.device("cuda")
         self.encoder = ResnetEncoder(50, False)
